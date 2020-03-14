@@ -94,3 +94,6 @@
 [submodule "libraries/I2CEncoderV2"]
 	path = libraries/I2CEncoderV2
 	url = https://github.com/Fattoresaimon/I2CEncoderV2.git
+[submodule "libraries/arduino_bbq10kbd"]
+	path = libraries/arduino_bbq10kbd
+	url = https://github.com/arturo182/arduino_bbq10kbd.git
