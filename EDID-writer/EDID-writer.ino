@@ -1,3 +1,6 @@
+/*
+ * EDID writer for CAT24C208 EEPROM
+ */
 #include <Wire.h>
 
 #define EEPROM_I2C_ADDR 0x50
@@ -15,8 +18,14 @@
 #define EEPROM_WRITE_DELAY 10
 #endif
 
+#define WIRE_SUCCESS 0
+#define WIRE_ERROR_BUFFER_OVERFLOW 1
+#define WIRE_ERROR_ADDRESS_NACK 2
+#define WIRE_ERROR_DATA_NACK 3
+#define WIRE_ERROR_OTHER 4
+
 /*
- * 4 block EDID
+ * EDID (dummy)
  */
 byte eepromdat[] = {
     // block 0
@@ -60,79 +69,151 @@ byte eepromdat[] = {
     0x1f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 };
 
-byte i2c_eeprom_read_byte(uint8_t deviceaddress, uint16_t eeaddress ) {
-    byte rdata = 0xFF;
-    Wire.beginTransmission(deviceaddress);
-    Wire.write(eeaddress);
-    Wire.endTransmission();
-    Wire.requestFrom(deviceaddress, (uint8_t)1);
-    while (!Wire.available()); 
-    rdata = Wire.read();
-    return rdata;
+void i2c_print_error(char* op, int address, int status)
+{
+    Serial.print("I2C ERROR: ");
+    Serial.print(op);
+    Serial.print(" address=0x");
+    Serial.print(address, HEX);
+    Serial.print(" status=");
+    Serial.print(status);
+    Serial.println();
 }
 
-void i2c_eeprom_read(uint8_t deviceaddress, uint16_t eeaddress, uint8_t* buffer, int size)
+int i2c_eeprom_read_segment_byte(uint16_t eeaddress, byte* rdata, bool segment)
 {
-    memset(buffer, 0xFF, size);
-    Wire.beginTransmission(deviceaddress);
-    Wire.write(eeaddress);
-    Wire.endTransmission();
-    Wire.requestFrom(deviceaddress, (uint8_t)size);
-    while (!Wire.available());
-    for (int i = 0; i < size; i++)
-        buffer[i] = Wire.read();
-}
+    int status;
+    int max_retry = 50;
 
-void dump(char* header, int start_addr, uint8_t* buffer, int size)
-{
-    int index;
-    for (index = 0; index < size; index++) {
-        if ((index % 16) == 0) {
-            Serial.print(header);
-            int addr = start_addr + index;
-            if (addr < 0x1000) Serial.print('0');
-            if (addr < 0x100) Serial.print('0');
-            if (addr < 0x10) Serial.print('0');
-            Serial.print(addr, HEX);
-            Serial.print(": ");
+    *rdata = 0xFF;
+
+  retry:
+    if (segment) {
+        Wire.beginTransmission(EEPROM_I2C_SEGMENT_POINTER_ADDR);
+        Wire.write((byte)(eeaddress / 0x100));
+        status = Wire.endTransmission(false);  // no STOP condition
+        if (status != WIRE_SUCCESS) {
+            if (status == WIRE_ERROR_ADDRESS_NACK || status == WIRE_ERROR_DATA_NACK) {
+                delay(5);
+                if (0 < max_retry--)
+                    goto retry;
+            }
+            i2c_print_error("write", EEPROM_I2C_SEGMENT_POINTER_ADDR, status);
+            return status;
         }
-        Serial.print("0x");
-        if (buffer[index] < 0x10) Serial.print('0');
-        Serial.print(buffer[index], HEX);
-        if ((index % 16) != 15)
-            Serial.print(", ");
     }
-    if ((index % 16) == 0)
-        Serial.println();
+
+    Wire.beginTransmission(EEPROM_I2C_ADDR);
+    Wire.write((byte)(eeaddress % 0x100));
+    status = Wire.endTransmission(false);  // no STOP condition
+    if (status != WIRE_SUCCESS) {
+        if (status == WIRE_ERROR_ADDRESS_NACK || status == WIRE_ERROR_DATA_NACK) {
+            delay(1);
+            if (0 < max_retry--)
+                goto retry;
+        }
+        i2c_print_error("write", EEPROM_I2C_ADDR, status);
+        return status;
+    }
+
+    Wire.requestFrom(EEPROM_I2C_ADDR, (uint8_t)1);
+    while (!Wire.available()); 
+    *rdata = Wire.read();
+
+    return WIRE_SUCCESS;
 }
 
-void i2c_eeprom_write_byte(uint8_t deviceaddress, uint16_t eeaddress, byte data) {
+int i2c_eeprom_write_segment_byte(uint16_t eeaddress, byte data, bool segment)
+{
+    int status;
+    int max_retry = 50;
+
+  retry:
+    if (segment) {
+        Wire.beginTransmission(EEPROM_I2C_SEGMENT_POINTER_ADDR);
+        Wire.write((byte)(eeaddress / 0x100));
+        status = Wire.endTransmission(false);  // no STOP condition
+        if (status != WIRE_SUCCESS) {
+            if (status == WIRE_ERROR_ADDRESS_NACK || status == WIRE_ERROR_DATA_NACK) {
+                delay(5);
+                if (0 < max_retry--)
+                    goto retry;
+            }
+            i2c_print_error("write", EEPROM_I2C_SEGMENT_POINTER_ADDR, status);
+            return status;
+        }
+    }
+
+    Wire.beginTransmission(EEPROM_I2C_ADDR);
+    Wire.write((byte)(eeaddress % 0x100));
+    Wire.write(data);
+    status = Wire.endTransmission();
+    if (status != WIRE_SUCCESS) {
+        if (status == WIRE_ERROR_ADDRESS_NACK || status == WIRE_ERROR_DATA_NACK) {
+            delay(1);
+            if (0 < max_retry--)
+                goto retry;
+        }
+        i2c_print_error("write", EEPROM_I2C_ADDR, status);
+        return status;
+    }
+
+    return WIRE_SUCCESS;
+}
+
+int i2c_write_byte(uint8_t deviceaddress, int eeaddress, byte data)
+{
+    int status;
+    int max_retry = 50;
+
+  retry:
     Wire.beginTransmission(deviceaddress);
     Wire.write((byte)eeaddress);
     Wire.write(data);
-    Wire.endTransmission();
-}
+    status = Wire.endTransmission();
+    if (status != WIRE_SUCCESS) {
+        if (status == WIRE_ERROR_ADDRESS_NACK || status == WIRE_ERROR_DATA_NACK) {
+            delay(1);
+            if (0 < max_retry--)
+                goto retry;
+        }
+        i2c_print_error("write", EEPROM_I2C_ADDR, status);
+        return status;
+    }
 
-void i2c_write_byte(uint8_t deviceaddress, byte data) {
-    Wire.beginTransmission(deviceaddress);
-    Wire.write(data);
-    Wire.endTransmission();
+    return WIRE_SUCCESS;
 }
 
 void write_read_verify(bool do_write, bool do_read, bool do_verify)
 {
     byte b;
     uint8_t i2c_addr;
-    Serial.println("Starting");
+    char* op;
+
+    if (do_verify && do_write) {
+        op = "Write and Verify";
+    } else
+    if (do_verify) {
+        op = "Verify";
+    } else
+    if (do_write) {
+        op = "Write";
+    } else
+    if (do_read) {
+        op = "Read";
+    } else {
+        op = "Dump internal data";
+    }
 
     if (do_verify) {
         do_read = true;
     }
 
+    Serial.print("Start ");
+    Serial.print(op);
+    Serial.print("...");
 #ifdef EEPROM_I2C_CONFIG_ADDR
-    i2c_eeprom_write_byte(EEPROM_I2C_CONFIG_ADDR, 0, EEPROM_I2C_CONFIG_BYTE);
-    delay(EEPROM_WRITE_DELAY);
-    i2c_write_byte(EEPROM_I2C_SEGMENT_POINTER_ADDR, 0); // XXX
+    i2c_write_byte(EEPROM_I2C_CONFIG_ADDR, 0, EEPROM_I2C_CONFIG_BYTE);
 #endif
     for (uint16_t index = 0; index < EEPROM_SIZE; index++) {
         if (index < sizeof(eepromdat)) {
@@ -143,17 +224,11 @@ void write_read_verify(bool do_write, bool do_read, bool do_verify)
         uint8_t d =  b;
 
         if (do_write) {
-            if (0x100 <= index) {
-                i2c_write_byte(EEPROM_I2C_SEGMENT_POINTER_ADDR, 1);
-            }
-            i2c_eeprom_write_byte(EEPROM_I2C_ADDR, index % 0x100, b);
+            i2c_eeprom_write_segment_byte(index, b, 0x100 <= index);
             delay(EEPROM_WRITE_DELAY);
 	}
         if (do_read) {
-            if (0x100 <= index) {
-                i2c_write_byte(EEPROM_I2C_SEGMENT_POINTER_ADDR, 1);
-            }
-            d = i2c_eeprom_read_byte(EEPROM_I2C_ADDR, index % 0x100);
+            i2c_eeprom_read_segment_byte(index, &d, 0x100 <= index);
 	}
         if (do_verify && b != d) {
             Serial.println();
@@ -168,6 +243,7 @@ void write_read_verify(bool do_write, bool do_read, bool do_verify)
 
         if ((index % 16) == 0) {
             Serial.println();
+            if (index < 0x1000) Serial.print('0');
             if (index < 0x100) Serial.print('0');
             if (index < 0x10) Serial.print('0');
             Serial.print(index, HEX);
@@ -179,40 +255,60 @@ void write_read_verify(bool do_write, bool do_read, bool do_verify)
         if ((index % 16) != 15)
             Serial.print(", ");
     }
-    if (do_verify && do_write) {
-        Serial.println("\n\r========\n\rWrite and Verify finished!");
-    } else
-    if (do_verify) {
-        Serial.println("\n\r========\n\rVerify finished!");
-    } else
-    if (do_write) {
-        Serial.println("\n\r========\n\rWrite finished!");
-    } else
-    if (do_read) {
-        Serial.println("\n\r========\n\rRead finished!");
-    } else {
-        Serial.println("\n\r========\n\rDump internal data finished!");
-    }
+    Serial.print("\n\r========\n\r");
+    Serial.print(op);
+    Serial.println(" finished!");
 }
 
 void setup() {
     Serial.begin(9600);
     while (!Serial);
+
     Serial.println();
     Serial.println(F("EEPROM WRITER"));
     Serial.print(F("EEPROM data size: "));
     Serial.println(sizeof(eepromdat));
 
-    Serial.println(F("Hit any key & return to start"));
-    while (!Serial.available());
-
     Wire.begin(); // initialise the connection
 
-    bool do_write = false;
-    bool do_read = true;
-    bool do_verify = true;
+    do {
+        Serial.println();
+        Serial.println(F("   r: read from EEPROM"));
+        Serial.println(F("   w: write to EEPROM"));
+        Serial.println(F("   v: verify EEPROM"));
+        Serial.println(F("  wv: write to EEPROM and verify"));
+        Serial.println(F("   d: dump internal data"));
+        Serial.println();
+        Serial.println(F("input & return to start"));
+        while (!Serial.available());
+	String input;
+        while (Serial.available()) {
+            char c = Serial.read();
+            if (isalnum(c))
+                input += c;
+        }
+	Serial.print("input='");
+	Serial.print(input);
+	Serial.println("'");
 
-    write_read_verify(do_write, do_read, do_verify);
+        if (input == "r") {
+            write_read_verify(false, true, false);
+        } else
+        if (input == "w") {
+            write_read_verify(true, false, false);
+        } else
+        if (input == "v") {
+            write_read_verify(false, false, true);
+        } else
+        if (input == "wv") {
+            write_read_verify(true, false, false);
+            Serial.println();
+            write_read_verify(false, false, true);
+        } else
+        if (input == "d") {
+            write_read_verify(false, false, false);
+        }
+    } while (true);
 }
 
 void loop() {
