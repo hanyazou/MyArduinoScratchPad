@@ -97,3 +97,6 @@
 [submodule "libraries/arduino_bbq10kbd"]
 	path = libraries/arduino_bbq10kbd
 	url = https://github.com/arturo182/arduino_bbq10kbd.git
+[submodule "libraries/DS3231"]
+	path = libraries/DS3231
+	url = https://github.com/NorthernWidget/DS3231.git
