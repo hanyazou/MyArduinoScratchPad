@@ -8,6 +8,8 @@
 
 #include <Wire.h>
 
+//#define Serial SerialUSB
+
 void setup() {
   Serial.begin (9600);
   while (!Serial);
@@ -24,8 +26,10 @@ void loop() {
   byte count = 0;
   
   Wire.begin();
-  for (byte i = 8; i < 120; i++)
+  for (byte i = 0; i < 128; i++)
   {
+    //Serial.print("I2C scanner. Scanning ");
+    //Serial.println(i);
     Wire.beginTransmission (i);
     if (Wire.endTransmission () == 0)
       {
@@ -44,4 +48,3 @@ void loop() {
   Serial.println (" device(s).");
   delay(1 * 1000);
 }
-
