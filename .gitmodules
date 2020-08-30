@@ -100,3 +100,12 @@
 [submodule "libraries/DS3231"]
 	path = libraries/DS3231
 	url = https://github.com/NorthernWidget/DS3231.git
+[submodule "libraries/CCS811"]
+	path = libraries/CCS811
+	url = https://github.com/maarten-pennings/CCS811.git
+[submodule "libraries/Adafruit_Si7021"]
+	path = libraries/Adafruit_Si7021
+	url = https://github.com/adafruit/Adafruit_Si7021.git
+[submodule "libraries/Adafruit_BMP280_Library"]
+	path = libraries/Adafruit_BMP280_Library
+	url = https://github.com/adafruit/Adafruit_BMP280_Library.git
