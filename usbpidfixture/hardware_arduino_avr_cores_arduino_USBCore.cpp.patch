@@ -1,0 +1,39 @@
+--- USBCore.cpp.ORIGINAL	2021-01-24 12:21:49.000000000 +0900
++++ USBCore.cpp	2021-01-24 14:24:07.000000000 +0900
+@@ -35,6 +35,8 @@ extern const u16 STRING_LANGUAGE[] PROGM
+ extern const u8 STRING_PRODUCT[] PROGMEM;
+ extern const u8 STRING_MANUFACTURER[] PROGMEM;
+ extern const DeviceDescriptor USB_DeviceDescriptorIAD PROGMEM;
++void AltDeviceDescriptor(const u8** desc, u8* flags) __attribute__((weak));
++void AltDeviceDescriptor(const u8** desc, u8* flags) { }
+ 
+ const u16 STRING_LANGUAGE[2] = {
+ 	(3<<8) | (2+2),
+@@ -509,9 +511,11 @@ bool SendDescriptor(USBSetup& setup)
+ #endif
+ 
+ 	const u8* desc_addr = 0;
++	u8 flags = TRANSFER_PGM;
+ 	if (USB_DEVICE_DESCRIPTOR_TYPE == t)
+ 	{
+ 		desc_addr = (const u8*)&USB_DeviceDescriptorIAD;
++		AltDeviceDescriptor(&desc_addr, &flags);
+ 	}
+ 	else if (USB_STRING_DESCRIPTOR_TYPE == t)
+ 	{
+@@ -537,9 +541,13 @@ bool SendDescriptor(USBSetup& setup)
+ 
+ 	if (desc_addr == 0)
+ 		return false;
+-	u8 desc_length = pgm_read_byte(desc_addr);
++	u8 desc_length;
++	if (flags & TRANSFER_PGM)
++		desc_length = pgm_read_byte(desc_addr);
++	else
++		desc_length = desc_addr[0];;
+ 
+-	USB_SendControl(TRANSFER_PGM,desc_addr,desc_length);
++	USB_SendControl(flags,desc_addr,desc_length);
+ 	return true;
+ }
+ 
