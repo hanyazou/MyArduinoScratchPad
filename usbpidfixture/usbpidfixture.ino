@@ -74,7 +74,8 @@ void AltDeviceDescriptor(const u8** desc, u8* flags) {
 
 void setup() {
     Serial.begin(9600);
-    while (!Serial);
+    for (int i = 0; i< 100 && !Serial; i++)
+        delay(50);
     Serial.print("USB test fixture mode = ");
     Serial.println(mode);
 }
