@@ -109,3 +109,9 @@
 [submodule "libraries/Adafruit_BMP280_Library"]
 	path = libraries/Adafruit_BMP280_Library
 	url = https://github.com/adafruit/Adafruit_BMP280_Library.git
+[submodule "libraries/Adafruit_AW9523"]
+	path = libraries/Adafruit_AW9523
+	url = https://github.com/adafruit/Adafruit_AW9523.git
+[submodule "libraries/Adafruit_BusIO"]
+	path = libraries/Adafruit_BusIO
+	url = https://github.com/adafruit/Adafruit_BusIO.git
