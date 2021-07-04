@@ -115,3 +115,9 @@
 [submodule "libraries/Adafruit_BusIO"]
 	path = libraries/Adafruit_BusIO
 	url = https://github.com/adafruit/Adafruit_BusIO.git
+[submodule "libraries/ESPEasy"]
+	path = libraries/ESPEasy
+	url = https://github.com/letscontrolit/ESPEasy.git
+[submodule "libraries/SparkFun_MAX3010x_Sensor_Library"]
+	path = libraries/SparkFun_MAX3010x_Sensor_Library
+	url = https://github.com/sparkfun/SparkFun_MAX3010x_Sensor_Library.git
