@@ -121,3 +121,6 @@
 [submodule "libraries/SparkFun_MAX3010x_Sensor_Library"]
 	path = libraries/SparkFun_MAX3010x_Sensor_Library
 	url = https://github.com/sparkfun/SparkFun_MAX3010x_Sensor_Library.git
+[submodule "libraries/TimerOne"]
+	path = libraries/TimerOne
+	url = https://github.com/PaulStoffregen/TimerOne.git
