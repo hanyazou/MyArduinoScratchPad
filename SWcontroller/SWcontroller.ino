@@ -100,11 +100,23 @@ bool debug;
 
 void reset(void) {
     memset(ports, 0, sizeof(ports));
-    for (int i = 0; i <arraysizeof(ports); i++) {
-        ports[i] = port_defaults[i];
-        ports[i].value = -1;
-    }
     debug = false;
+    for (int i = 0; i < arraysizeof(ports); i++) {
+        struct port* p = &ports[i];
+        *p = port_defaults[i];
+        p->value = -1;
+        if (p->attrs & PORT_DIGITAL) {
+            if (p->attrs & PORT_OUTPUT) {
+                pinMode(p->pin, OUTPUT);
+                p->raw_value = p->value = 0;
+                digitalWrite(p->pin, p->raw_value);
+            } else {
+                pinMode(p->pin, INPUT);
+                p->raw_value = digitalRead(p->pin);
+                p->value = p->raw_value ? 1 : 0;
+            }
+        }
+    }
 }
 
 void setup() {
@@ -113,16 +125,6 @@ void setup() {
         delay(1);  // wait for serial port to open
     Serial.println("Switch Controller");
     reset();
-    for (int i = 0; i < arraysizeof(ports); i++) {
-        struct port* p = &ports[i];
-        if (p->attrs & PORT_DIGITAL) {
-            if (p->attrs & PORT_OUTPUT) {
-                pinMode(p->pin, OUTPUT);
-            } else {
-                pinMode(p->pin, INPUT);
-            }
-        }
-    }
     Timer1.initialize(10000);
     Timer1.attachInterrupt(watch);  // watch to run every 10 milli seconds
 }
