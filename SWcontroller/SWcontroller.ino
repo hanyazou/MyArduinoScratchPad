@@ -41,6 +41,7 @@ enum {
     CMD_RESET,
     CMD_DELAY,
     CMD_DEBUG,
+    CMD_ECHO,
 };
 
 const int PORT_DIGITAL = (1 << 0);
@@ -68,6 +69,7 @@ struct {
     { CMD_DELAY,    "delay",    "delay <n>: wait for n (ms)" },
     { CMD_DEBUG,    "debug",    "debug {0|1}: set debug flag" },
     { CMD_RESET,    "reset",    "reset all settings" },
+    { CMD_ECHO,     "echo",     "echo on|off: turn on or off input echoing" },
     { CMD_HELP,     "help",     "show this message" },
 };
 
@@ -96,11 +98,13 @@ struct port port_defaults[] = {
 struct port ports[arraysizeof(port_defaults)];
 
 bool parse_error;
-bool debug;
+bool opt_debug;
+bool opt_echo;
 
 void reset(void) {
     memset(ports, 0, sizeof(ports));
-    debug = false;
+    opt_debug = false;
+    opt_echo = true;
     for (int i = 0; i < arraysizeof(ports); i++) {
         struct port* p = &ports[i];
         *p = port_defaults[i];
@@ -250,7 +254,7 @@ void execute(char* args[], int argcnt) {
         } else {
             value = LOW;
         }
-        if (debug) {
+        if (opt_debug) {
             Serial.print("set port '");
             Serial.print(ports[port].name);
             Serial.print("' to ");
@@ -266,7 +270,7 @@ void execute(char* args[], int argcnt) {
             Serial.println("invalid argument");
             break;
         }
-        if (debug) {
+        if (opt_debug) {
             Serial.print("delay ");
             Serial.print(value);
             Serial.println(" ms");
@@ -325,18 +329,39 @@ void execute(char* args[], int argcnt) {
         ports[port].threshold = value;
         break;
     case CMD_RESET:
-            reset();
+        reset();
         break;
     case CMD_DEBUG:
         if (argcnt != 2 || !get_integer(args[1], &value)) {
             Serial.println("invalid argument");
             break;
         }
-        debug = value;
-        if (debug) {
+        opt_debug = value;
+        if (opt_debug) {
             Serial.print("set debug flag to ");
             Serial.println(args[1]);
         }
+        break;
+    case CMD_ECHO:
+        if (argcnt == 1) {
+            Serial.print("echo is ");
+            Serial.println(opt_echo ? "on" : "off");
+            break;
+        }
+        if (argcnt == 2 && strcasecmp(args[1], "on") == 0) {
+            opt_echo = true;
+            break;
+        }
+        if (argcnt == 2 && strcasecmp(args[1], "off") == 0) {
+            opt_echo = false;
+            break;
+        }
+        for (int i = 1; i < argcnt; i++) {
+            if (1 < i)
+                Serial.print(" ");
+            Serial.print(args[i]);
+        }
+        Serial.println();
         break;
     default:
         Serial.println("internal error");
@@ -345,7 +370,7 @@ void execute(char* args[], int argcnt) {
 }
 
 void parse(char* buf) {
-    if (debug) {
+    if (opt_debug) {
         Serial.print("parse(): buf='");
         Serial.print(buf);
         Serial.println("'");
@@ -360,7 +385,7 @@ void parse(char* buf) {
         while (buf[i] == ' ' || buf[i] == '\t')
             i++;
         args[count] = &buf[i];
-        if (debug) {
+        if (opt_debug) {
             Serial.print("args[");
             Serial.print(count);
             Serial.print("] = '");
@@ -380,7 +405,7 @@ void parse(char* buf) {
         // Ignore trailing whitespace
         while (buf[i] == ' ' || buf[i] == '\t')
             buf[i++] = '\0';
-        if (debug) {
+        if (opt_debug) {
             Serial.print("buf[");
             Serial.print(i);
             Serial.print("] = ");
@@ -404,9 +429,12 @@ void loop() {
         delay(10);
         return;
     }
-    if (debug) {
+    if (opt_debug) {
         Serial.print("read()=");
         Serial.println(c, HEX);
+    }
+    if (opt_echo) {
+        Serial.print(c);
     }
     if (c == '\n' || c == '\r') {
         if (parse_error) {
@@ -424,7 +452,7 @@ void loop() {
         parse_error = true;
         return;
     }
-    if (debug) {
+    if (opt_debug) {
         Serial.print("input=");
         Serial.print(c);
         Serial.print(", bufcnt=");
