@@ -2,9 +2,13 @@
 #include <z80retroshield.h>
 #include <SdFat.h>
 
+// #define CPM_DEBUG
+// #define CPM_DEBUG_DISKIO
+#ifdef CPM_DEBUG
 bool verbose_debug_instruction = false;
 bool done = false;
 static int stop_count = 0;
+#endif
 
 
 //
@@ -47,7 +51,7 @@ void hex_dump(char* hdr, int addr, int len)
 //
 char memory_read(int address)
 {
-#if 0
+#ifdef CPM_DEBUG
     if (address == 0xfa00) {
         sprintf(tmp, "#### read 0xfa00");
         Serial.println(tmp);
@@ -198,14 +202,14 @@ void io_write(int address, char val)
                 if (file.seekSet(offset) &&
                     file.read(&memory[io_fdc_dma], 128) == 128) {
                     io_fdc_status = 0;  // succeeded
+                    delay(1);
                 }
             }
         } else
         if (uval == 1) {
             // TODO
         }
-        delay(1);
-#if 0
+#ifdef CPM_DEBUG_DISKIO
         sprintf(tmp, "%5s: drive %d, track %2d, sector %2d, LBA %4u@%u to %04XH: status %d",
                 uval == 0 ? "Read" : "Write",
                 io_fdc_drive, io_fdc_track, io_fdc_sector, lba, offset, io_fdc_dma,
@@ -213,7 +217,7 @@ void io_write(int address, char val)
         Serial.println(tmp);
         hex_dump("    ", io_fdc_dma, 32);
 #endif
-#if 0
+#ifdef CPM_DEBUG
         if (uval == 0 && io_fdc_track == 2 && io_fdc_sector == 8) {
             sprintf(tmp, "#### read track 2, sector 8");
             Serial.println(tmp);
@@ -274,11 +278,6 @@ void setup()
     cpu.set_io_read(io_read);
     cpu.set_io_write(io_write);
 
-    //
-    // Configured.
-    //
-    Serial.println("Z80 configured; launching program.");
-
 #ifdef Z80RetroShield_DEBUG
     //
     // Enable debug output.
@@ -304,6 +303,11 @@ void setup()
         }
     }
     Serial.println();
+
+    //
+    // Configured.
+    //
+    Serial.println("Z80 configured; launching program.");
 }
 
 
@@ -312,6 +316,7 @@ void setup()
 //
 void loop()
 {
+#ifdef CPM_DEBUG
     if (stop_count != 0) {
         if (--stop_count == 0) {
                 sprintf(tmp, "stop.");
@@ -319,7 +324,6 @@ void loop()
                 done = true;
         }
     }
-#if 0
     if (done) return;
     static int cycles = 0;
     if (cycles > 500)
@@ -330,5 +334,5 @@ void loop()
     //
     // Step the CPU.
     //
-    cpu.Tick();
+    cpu.Tick(100);
 }
