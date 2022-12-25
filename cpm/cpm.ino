@@ -199,45 +199,44 @@ void io_write(int address, char val)
         break;
     case 13:  // fdc-port: command
         {
-        auto& drive = io_drives[io_fdc_drive];
-        auto& file = drive.image_file;
-        io_fdc_status = 1;  // error
-        if (uval != 0 && uval != 1) {
-            sprintf(tmp, "Unknown FDC command: %02XH", uval);
-            Serial.println(tmp);
-            break;
-        }
-        uint32_t lba = ((uint32_t)io_fdc_track * drive.sectors + io_fdc_sector - 1);
-        uint32_t offset = lba * 128;
-        if (uval == 0) {
-            if (uval < NumDrives && drive.image_file.isOpen()) {
-                if (file.seekSet(offset) &&
-                    file.read(&memory[io_fdc_dma], 128) == 128) {
-                    io_fdc_status = 0;  // succeeded
-                    delay(1);
-                }
+            auto& drive = io_drives[io_fdc_drive];
+            auto& file = drive.image_file;
+            io_fdc_status = 1;  // error
+            if (uval != 0 && uval != 1) {
+                sprintf(tmp, "Unknown FDC command: %02XH", uval);
+                Serial.println(tmp);
+                break;
             }
-        } else
-        if (uval == 1) {
-            // TODO
-        }
+            uint32_t lba = ((uint32_t)io_fdc_track * drive.sectors + io_fdc_sector - 1);
+            uint32_t offset = lba * 128;
+            if (uval == 0) {
+                if (uval < NumDrives && drive.image_file.isOpen()) {
+                    if (file.seekSet(offset) && file.read(&memory[io_fdc_dma], 128) == 128) {
+                        io_fdc_status = 0;  // succeeded
+                        delay(1);
+                    }
+                }
+            } else
+            if (uval == 1) {
+                // TODO
+            }
 #ifdef CPM_DEBUG_DISKIO
-        sprintf(tmp, "%5s: drive %d, track %2d, sector %2d, LBA %4u@%u to %04XH: status %d",
-                uval == 0 ? "Read" : "Write",
-                io_fdc_drive, io_fdc_track, io_fdc_sector, lba, offset, io_fdc_dma,
-                io_fdc_status);
-        Serial.println(tmp);
-        hex_dump("    ", io_fdc_dma, 32);
+            sprintf(tmp, "%5s: drive %d, track %2d, sector %2d, LBA %4u@%u to %04XH: status %d",
+                    uval == 0 ? "Read" : "Write",
+                    io_fdc_drive, io_fdc_track, io_fdc_sector, lba, offset, io_fdc_dma,
+                    io_fdc_status);
+            Serial.println(tmp);
+            hex_dump("    ", io_fdc_dma, 32);
 #endif
 #ifdef CPM_DEBUG
-        if (uval == 0 && io_fdc_track == 2 && io_fdc_sector == 8) {
-            sprintf(tmp, "#### read track 2, sector 8");
-            Serial.println(tmp);
-            //stop_count = 1000;
-            verbose_debug_instruction = true;
-        }
+            if (uval == 0 && io_fdc_track == 2 && io_fdc_sector == 8) {
+                sprintf(tmp, "#### read track 2, sector 8");
+                Serial.println(tmp);
+                //stop_count = 1000;
+                verbose_debug_instruction = true;
+            }
 #endif
-        break;
+            break;
         }
     case 14:  // fdc-port: status
         // just ignore
