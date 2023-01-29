@@ -1,15 +1,26 @@
 
 #include <z80retroshield.h>
+#include <z80retroshieldDebug.h>
 #include <SdFat.h>
 
 // #define CPM_DEBUG
-// #define CPM_DEBUG_DISKIO
+//#define CPM_DEBUG_DISKIO
 #ifdef CPM_DEBUG
-bool verbose_debug_instruction = false;
-bool done = false;
 static int stop_count = 0;
 #endif
+bool done = false;
+unsigned int debug_sum = 0;
+bool debug_disk_read_delay = false;  // true;
 
+const int disk_log_size = 64;
+uint32_t disk_log_index = 0;
+struct {
+    uint32_t index;
+    uint16_t lba;
+    uint16_t mem;
+    uint16_t blk_sum;
+    uint16_t ttl_sum;
+} disk_log[disk_log_size] = { 0 };
 
 //
 // Initial prgram loader.
@@ -40,7 +51,7 @@ char tmp[256] = { '\0' };
 //
 // Our helper
 //
-Z80RetroShield cpu;
+Z80RetroShieldDebug cpu;
 
 void hex_dump(char* hdr, int addr, int len)
 {
@@ -58,6 +69,8 @@ void hex_dump(char* hdr, int addr, int len)
     }
 }
 
+static uint8_t io_fdc_sector = 0;
+
 //
 // RAM I/O function handler.
 //
@@ -68,10 +81,22 @@ char memory_read(int address)
         sprintf(tmp, "#### read 0xfa00");
         Serial.println(tmp);
         //stop_count = 1000;
-        //verbose_debug_instruction = true;
         hex_dump("#### ", 0xfa00, 32);
+            cpu.disable_debug(cpu.DEBUG_FLAG_MEM);
+    }
+    if (address == 0x0002) {
+        sprintf(tmp, "#### read 0x0002 after sector %d", io_fdc_sector);
+        Serial.println(tmp);
     }
 #endif
+    if (address == 0x0035) {
+        static int count = 0;
+        if (300 <= count) {
+            cpu.disable_debug(cpu.DEBUG_FLAG_MEM);
+        } else {
+            count++;
+        }
+    }
 
     if (address >= 0 && address < memory_len)
         return (memory[address]) ;
@@ -99,7 +124,7 @@ void memory_write(int address, char value)
 
 static uint8_t io_fdc_drive = 0;
 static uint8_t io_fdc_track = 0;
-static uint8_t io_fdc_sector = 0;
+//static uint8_t io_fdc_sector = 0;
 static uint8_t io_fdc_status = 1;  // XXX, non zero means error
 static uint16_t io_fdc_dma = 0;
 
@@ -213,9 +238,31 @@ void io_write(int address, char val)
                 if (uval < NumDrives && drive.image_file.isOpen()) {
                     if (file.seekSet(offset) && file.read(&memory[io_fdc_dma], 128) == 128) {
                         io_fdc_status = 0;  // succeeded
-                        delay(1);
-                    }
-                }
+
+                        int sum = 0;
+                        for (int i = 0; i < 128; i++) {
+                            sum += memory[io_fdc_dma+i];
+                        }
+                        debug_sum += sum;
+#if 1
+                        //if (debug_disk_read_delay)
+                        //    delay(1);
+                        delay(10);
+#else
+                        volatile long i = 50;
+                        while (0 < i)
+                            i--;
+#endif
+                        disk_log[disk_log_index % disk_log_size].index = disk_log_index;
+                        disk_log[disk_log_index % disk_log_size].lba = lba;
+                        disk_log[disk_log_index % disk_log_size].mem = io_fdc_dma;
+                        disk_log[disk_log_index % disk_log_size].blk_sum = sum;
+                        disk_log[disk_log_index % disk_log_size].ttl_sum = debug_sum;
+                        disk_log_index++;
+                    } else
+                        Serial.println("seek or read error");
+                } else
+                    Serial.println("disk image is not opened");
             } else
             if (uval == 1) {
                 // TODO
@@ -227,13 +274,15 @@ void io_write(int address, char val)
                     io_fdc_status);
             Serial.println(tmp);
             hex_dump("    ", io_fdc_dma, 32);
+            sprintf(tmp, "DEBUG: drive %d, track %2d, sector %2d, sum %04X",
+                    io_fdc_drive, io_fdc_track, io_fdc_sector, debug_sum);
+            Serial.println(tmp);
 #endif
 #ifdef CPM_DEBUG
             if (uval == 0 && io_fdc_track == 2 && io_fdc_sector == 8) {
                 sprintf(tmp, "#### read track 2, sector 8");
                 Serial.println(tmp);
                 //stop_count = 1000;
-                verbose_debug_instruction = true;
             }
 #endif
             break;
@@ -248,6 +297,18 @@ void io_write(int address, char val)
         io_fdc_dma = ((io_fdc_dma & 0x00ff) | (uval << 8));
         break;
 
+    case 0xa0:  // XXX, reset?
+        debug_disk_read_delay = !debug_disk_read_delay;
+        sprintf(tmp, "debug_disk_read_delay=%s", debug_disk_read_delay ? "true" : "false");
+        Serial.println(tmp);
+        for (int i = 0; i < disk_log_size; i++) {
+            sprintf(tmp, "DISK LOG: %3d %3d LBA %4d to %04XH, sum %04X %04X",
+                    i, disk_log[i].index, disk_log[i].lba, disk_log[i].mem,
+                    disk_log[i].blk_sum, disk_log[i].ttl_sum);
+            Serial.println(tmp);
+        }
+        break;
+
     default:
         sprintf(tmp, "Attempted write to I/O port %02X with value %02X",
                 address, uval);
@@ -257,15 +318,69 @@ void io_write(int address, char val)
 }
 
 
-#ifdef Z80RetroShield_DEBUG
 //
 // Debug message handler.
 //
 void debug_output(const char* msg) {
-    if (verbose_debug_instruction)
-        Serial.println(msg);
+    Serial.println(msg);
 }
-#endif
+
+void show_pin_settings(void)
+{
+    for (int group = 0; group < 4; group++) {
+        uint8_t* reg_base = (uint8_t*)&PORT->Group[group].IN.reg;
+        reg_base -= 0x20;
+        uint32_t* dir = (uint32_t*)(reg_base + 0x00);
+        uint32_t* ctrl = (uint32_t*)(reg_base + 0x24);
+        uint32_t* wrconfig = (uint32_t*)(reg_base + 0x28);
+        uint32_t* evctrl = (uint32_t*)(reg_base + 0x2c);
+        uint32_t* pmux = (uint32_t*)(reg_base + 0x30);
+        sprintf(tmp, "P%c: base addr %08X", "ABCD"[group], reg_base);
+        Serial.println(tmp);
+        sprintf(tmp, "    DIR=%08X CTRL=%08X WRCONFIG=%08X EVCTRL=%08X",
+                *dir, *ctrl, *wrconfig, *evctrl);
+        Serial.println(tmp);
+        sprintf(tmp, "    PMUX %08X %08X %08X %08X %08X", pmux,
+                pmux[0], pmux[1], pmux[2], pmux[3]);
+        Serial.println(tmp);
+        sprintf(tmp, "  PMUXEN %08X %d%d%d%d %d%d%d%d %d%d%d%d %d%d%d%d "
+                                   "%d%d%d%d %d%d%d%d %d%d%d%d %d%d%d%d",
+                &reg_base[0x40],
+                reg_base[0x5f]&1,
+                reg_base[0x5e]&1,
+                reg_base[0x5d]&1,
+                reg_base[0x5c]&1,
+                reg_base[0x5b]&1,
+                reg_base[0x5a]&1,
+                reg_base[0x59]&1,
+                reg_base[0x58]&1,
+                reg_base[0x57]&1,
+                reg_base[0x56]&1,
+                reg_base[0x55]&1,
+                reg_base[0x54]&1,
+                reg_base[0x53]&1,
+                reg_base[0x52]&1,
+                reg_base[0x51]&1,
+                reg_base[0x50]&1,
+                reg_base[0x4f]&1,
+                reg_base[0x4e]&1,
+                reg_base[0x4d]&1,
+                reg_base[0x4c]&1,
+                reg_base[0x4b]&1,
+                reg_base[0x4a]&1,
+                reg_base[0x49]&1,
+                reg_base[0x48]&1,
+                reg_base[0x47]&1,
+                reg_base[0x46]&1,
+                reg_base[0x45]&1,
+                reg_base[0x44]&1,
+                reg_base[0x43]&1,
+                reg_base[0x42]&1,
+                reg_base[0x41]&1,
+                reg_base[0x40]&1);
+        Serial.println(tmp);
+    }
+}
 
 
 //
@@ -276,6 +391,7 @@ void setup()
     Serial.begin(115200);
     while (!Serial);
 
+#if 1
     //
     // Setup callbacks for memory read/writes.
     //
@@ -288,14 +404,16 @@ void setup()
     //
     cpu.set_io_read(io_read);
     cpu.set_io_write(io_write);
+#endif
 
-#ifdef Z80RetroShield_DEBUG
     //
     // Enable debug output.
     //
     cpu.set_debug_output(debug_output);
-#endif
+    //cpu.enable_debug(cpu.DEBUG_FLAG_IO);
+    //cpu.enable_debug(cpu.DEBUG_FLAG_MEM);
 
+#if 1
     //
     // Open CP/M disk images.
     //
@@ -314,11 +432,13 @@ void setup()
         }
     }
     Serial.println();
+#endif
 
     //
     // Configured.
     //
     Serial.println("Z80 configured; launching program.");
+
 }
 
 
@@ -335,15 +455,26 @@ void loop()
                 done = true;
         }
     }
-    if (done) return;
-    static int cycles = 0;
-    if (cycles > 500)
-        return;
-    cycles++;
 #endif
+    if (done) return;
+    static uint32_t cycles = 0;
+#if 0
+    if (cycles > 100000 || io_fdc_sector == 26) {
+        done = true;
+        for (int i = 0; i < disk_log_size && (i % disk_log_size) == disk_log[i].index; i++) {
+            sprintf(tmp, "DISK LOG: %3d %3d LBA %4d to %04XH, sum %04X %04X",
+                    i, disk_log[i].index, disk_log[i].lba, disk_log[i].mem,
+                    disk_log[i].blk_sum, disk_log[i].ttl_sum);
+            Serial.println(tmp);
+        }
+        return;
+    }
+#endif
+    cycles++;
 
     //
     // Step the CPU.
     //
     cpu.Tick(100);
+    //show_pin_settings();
 }
