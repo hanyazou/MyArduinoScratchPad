@@ -16,8 +16,6 @@
    5. Start the service.
    6. Start advertising.
 
-   In this example rxValue is the data received (only accessible inside that function).
-   And txValue is the data to be sent, in this example just a byte incremented every second.
 */
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -28,7 +26,7 @@ BLEServer *pServer = NULL;
 BLECharacteristic *pTxCharacteristic;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
-uint8_t txValue = 0;
+HardwareSerial Serial2(0);
 
 // See the following for generating UUIDs:
 // https://www.uuidgenerator.net/
@@ -39,10 +37,12 @@ uint8_t txValue = 0;
 
 class MyServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *pServer) {
+    Serial.println("connected");
     deviceConnected = true;
   };
 
   void onDisconnect(BLEServer *pServer) {
+    Serial.println("disconnected");
     deviceConnected = false;
   }
 };
@@ -52,20 +52,19 @@ class MyCallbacks : public BLECharacteristicCallbacks {
     String rxValue = pCharacteristic->getValue();
 
     if (rxValue.length() > 0) {
-      Serial.println("*********");
-      Serial.print("Received Value: ");
+      Serial.print("Received ");
+      Serial.print(rxValue.length());
+      Serial.println(" bytes");
       for (int i = 0; i < rxValue.length(); i++) {
-        Serial.print(rxValue[i]);
+        Serial2.write(rxValue[i]);
       }
-
-      Serial.println();
-      Serial.println("*********");
     }
   }
 };
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("BLE serial");
 
   // Create the BLE Device
   BLEDevice::init("UART Service");
@@ -92,14 +91,24 @@ void setup() {
   // Start advertising
   pServer->getAdvertising()->start();
   Serial.println("Waiting a client connection to notify...");
+
+  Serial2.begin(115200, SERIAL_8N1, D1, D2);
+  Serial2.println("Hello, serial2");
 }
 
 void loop() {
 
   if (deviceConnected) {
-    pTxCharacteristic->setValue(&txValue, 1);
-    pTxCharacteristic->notify();
-    txValue++;
+    if((0 < Serial2.available())) {
+      uint8_t buf[256];
+      size_t n = Serial2.readBytes(buf, sizeof(buf));
+      Serial.print("Transfered ");
+      Serial.print(n);
+      Serial.println(" bytes");
+      pTxCharacteristic->setValue(buf, n);
+      pTxCharacteristic->notify();
+    }
+
     delay(10);  // bluetooth stack will go into congestion, if too many packets are sent
   }
 
