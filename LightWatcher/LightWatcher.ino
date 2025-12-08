@@ -189,25 +189,16 @@ LedState estimateLedState(uint16_t rRaw, uint16_t gRaw, uint16_t bRaw, uint16_t 
   st.normBrightness = effL / MAX_BRIGHT;
   if (st.normBrightness > 1.0f) st.normBrightness = 1.0f;
 
-  if (!led_on) {
-    st.color = LedClass::Off;
-    return st;
-  }
-
   float sum = R + G + B;
-  if (sum < 1.0f) {
+  st.r = R / sum;
+  st.g = G / sum;
+  st.b = B / sum;
+
+  if (!led_on || sum < 1.0f) {
     st.color = LedClass::Off;
     return st;
   }
-
-  float r = R / sum;
-  float g = G / sum;
-  float b = B / sum;
-
-  st.r = r;
-  st.g = g;
-  st.b = b;
-  st.color = classifyColor(r, g, b);
+  st.color = classifyColor(st.r, st.g, st.b);
   return st;
 }
 
