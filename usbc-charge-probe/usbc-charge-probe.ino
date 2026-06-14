@@ -59,6 +59,13 @@ static const float VBUS_PRESENT_MIN_V = 4.0f;
 static const float CC_ATTACH_MIN_V    = 0.15f;
 static const float CC_ATTACH_MAX_V    = 2.60f;
 
+static const float BC12_DM_RESPONSE_MIN_V = 0.45f;
+static const float BC12_DM_RESPONSE_MAX_V = 0.85f;
+
+static const unsigned long ATTACH_WAIT_TIMEOUT_MS = 5UL * 60UL * 1000UL;
+static const unsigned long BC12_VBUS_WAIT_TIMEOUT_MS = 5UL * 60UL * 1000UL;
+static const unsigned long WAIT_PRINT_INTERVAL_MS = 5000UL;
+
 // -----------------------------------------------------------------------------
 // Pin assignment
 // -----------------------------------------------------------------------------
@@ -444,6 +451,23 @@ static void all_probe_lines_open(void) {
   usbc_probe_set(USBC_PROBE_DM,  USBC_PROBE_OPEN);
 }
 
+static bool serial_abort_requested(void) {
+  while (Serial.available() > 0) {
+    char c = Serial.read();
+    if (c == 'q' || c == 'Q') {
+      return true;
+    }
+  }
+  return false;
+}
+
+static void print_wait_status(float vbus, float cc1, float cc2) {
+  print_voltage("VBUS", vbus); Serial.print("  ");
+  print_voltage("CC1",  cc1);  Serial.print("  ");
+  print_voltage("CC2",  cc2);
+  Serial.println();
+}
+
 // -----------------------------------------------------------------------------
 // Test 1:
 // Board self-test with nothing connected to Type-C receptacle.
@@ -650,41 +674,54 @@ static bool test_sink_attach_wait(void) {
 
   bool success = false;
   const unsigned long start_ms = millis();
-  const unsigned long timeout_ms = 60000UL;
+  bool last_vbus_present = false;
+  bool last_cc_attached  = false;
+  bool have_last_state   = false;
+  unsigned long last_print_ms = 0;
 
-  while (millis() - start_ms < timeout_ms) {
-    if (Serial.available() > 0) {
-      char c = Serial.read();
-      if (c == 'q' || c == 'Q') {
-        Serial.println("Aborted by user.");
-        break;
-      }
+  while (millis() - start_ms < ATTACH_WAIT_TIMEOUT_MS) {
+    if (serial_abort_requested()) {
+      Serial.println("Aborted by user.");
+      break;
     }
 
     const float vbus = usbc_probe_read(USBC_PROBE_VBUS);
     const float cc1  = usbc_probe_read(USBC_PROBE_CC1);
     const float cc2  = usbc_probe_read(USBC_PROBE_CC2);
 
-    print_voltage("VBUS", vbus); Serial.print("  ");
-    print_voltage("CC1",  cc1);  Serial.print("  ");
-    print_voltage("CC2",  cc2);
-
     const bool vbus_present = vbus >= VBUS_PRESENT_MIN_V;
     const bool cc_attached  = cc_attach_like(cc1) || cc_attach_like(cc2);
 
+    const unsigned long now = millis();
+
+    const bool state_changed =
+      !have_last_state ||
+      (vbus_present != last_vbus_present) ||
+      (cc_attached  != last_cc_attached);
+
+    const bool periodic_print =
+      (now - last_print_ms) >= WAIT_PRINT_INTERVAL_MS;
+
+    if (state_changed || periodic_print) {
+      print_wait_status(vbus, cc1, cc2);
+
+      if (vbus_present && !cc_attached) {
+        Serial.println("  VBUS present, but CC voltage is not attach-like yet.");
+      }
+
+      last_print_ms = now;
+      last_vbus_present = vbus_present;
+      last_cc_attached = cc_attached;
+      have_last_state = true;
+    }
+
     if (vbus_present && cc_attached) {
-      Serial.println("  -> Source attach detected.");
+      Serial.println("Source attach detected.");
       success = true;
       break;
     }
 
-    if (vbus_present && !cc_attached) {
-      Serial.println("  -> VBUS present, but CC voltage is not attach-like yet.");
-    } else {
-      Serial.println();
-    }
-
-    delay(500);
+    delay(200);
   }
 
   if (success) {
@@ -702,6 +739,180 @@ static bool test_sink_attach_wait(void) {
 }
 
 // -----------------------------------------------------------------------------
+// Test 3:
+// BC1.2-style D+ 0.6V / D- response check.
+//
+// Intended use:
+//   - Connect a Type-A BC1.2-capable charger through an A-to-C cable.
+//   - The A-to-C cable should provide Rp on CC.
+//   - This probe provides Rd on CC1/CC2.
+//   - After VBUS is detected, the probe drives D+ to ~0.6V and observes D-.
+//
+// Notes:
+//   - D- ~= 0.6V means "charging-port-like response".
+//   - This alone does not distinguish CDP from DCP.
+//   - VBUS absent is treated as an error.
+//   - VBUS present but no D- response is reported as "no response", not a board error.
+// -----------------------------------------------------------------------------
+
+static bool test_bc12_dp_0v6_dm_response(void) {
+  Serial.println();
+  Serial.println("=== Test 3: BC1.2 D+ 0.6V / D- response check ===");
+  Serial.println("Use a Type-A charger with a Type-A to Type-C cable.");
+  Serial.println("The probe will set CC1/CC2 to Rd, wait for VBUS,");
+  Serial.println("then drive D+ to about 0.6V and read D-.");
+  Serial.println("Press 'q' to abort.");
+  Serial.println();
+
+  usbc_probe_led_all_off();
+
+  // Start from a safe state.
+  all_probe_lines_open();
+
+  // DP/DM must be open before VBUS arrives.
+  usbc_probe_set(USBC_PROBE_DP, USBC_PROBE_OPEN);
+  usbc_probe_set(USBC_PROBE_DM, USBC_PROBE_OPEN);
+
+  // Behave as a Type-C sink.
+  usbc_probe_set(USBC_PROBE_CC1, USBC_PROBE_RD);
+  usbc_probe_set(USBC_PROBE_CC2, USBC_PROBE_RD);
+
+  Serial.println("Waiting for VBUS...");
+  Serial.println();
+
+  const unsigned long start_ms = millis();
+  bool vbus_ok = false;
+  bool last_vbus_present = false;
+  bool have_last_state   = false;
+  unsigned long last_print_ms = 0;
+
+  while (millis() - start_ms < BC12_VBUS_WAIT_TIMEOUT_MS) {
+    if (serial_abort_requested()) {
+      Serial.println("Aborted by user.");
+      all_probe_lines_open();
+      blink_red(10);
+      return false;
+    }
+
+    const float vbus = usbc_probe_read(USBC_PROBE_VBUS);
+    const float cc1  = usbc_probe_read(USBC_PROBE_CC1);
+    const float cc2  = usbc_probe_read(USBC_PROBE_CC2);
+
+    const bool vbus_present = vbus >= VBUS_PRESENT_MIN_V;
+    const unsigned long now = millis();
+
+    const bool state_changed =
+      !have_last_state ||
+      (vbus_present != last_vbus_present);
+
+    const bool periodic_print =
+      (now - last_print_ms) >= WAIT_PRINT_INTERVAL_MS;
+
+    if (state_changed || periodic_print) {
+      print_wait_status(vbus, cc1, cc2);
+
+      last_print_ms = now;
+      last_vbus_present = vbus_present;
+      have_last_state = true;
+    }
+
+    if (vbus_present) {
+      vbus_ok = true;
+      break;
+    }
+
+    delay(200);
+  }
+
+  if (!vbus_ok) {
+    Serial.println();
+    Serial.println("Test 3 result: ERROR");
+    Serial.println("VBUS was not detected.");
+    Serial.println("Check the charger, cable, CC wiring, and GND connection.");
+    all_probe_lines_open();
+    blink_red(10);
+    return false;
+  }
+
+  Serial.println();
+  Serial.println("VBUS detected. Starting D+/D- check...");
+
+  // Let the charger/cable/port settle after VBUS appears.
+  delay(300);
+
+  // Ensure D- is not driven by this probe.
+  usbc_probe_set(USBC_PROBE_DM, USBC_PROBE_OPEN);
+
+  // Drive D+ to approximately 0.6V using the fixed 68k/10k divider.
+  usbc_probe_set(USBC_PROBE_DP, USBC_PROBE_0V6);
+
+  // Allow D+ RC and charger response to settle.
+  delay(300);
+
+  const float vbus = usbc_probe_read(USBC_PROBE_VBUS);
+  const float cc1  = usbc_probe_read(USBC_PROBE_CC1);
+  const float cc2  = usbc_probe_read(USBC_PROBE_CC2);
+  const float dp   = usbc_probe_read(USBC_PROBE_DP);
+  const float dm   = usbc_probe_read(USBC_PROBE_DM);
+
+  Serial.println();
+  Serial.println("[BC1.2-style response]");
+  print_voltage("VBUS", vbus); Serial.print("  ");
+  print_voltage("CC1",  cc1);  Serial.print("  ");
+  print_voltage("CC2",  cc2);  Serial.print("  ");
+  print_voltage("D+",   dp);   Serial.print("  ");
+  print_voltage("D-",   dm);
+  Serial.println();
+
+  bool dp_ok = in_range(dp, DLINE_0V6_MIN_V, DLINE_0V6_MAX_V);
+  bool dm_response = in_range(dm, BC12_DM_RESPONSE_MIN_V, BC12_DM_RESPONSE_MAX_V);
+
+  Serial.print("D+ drive check: ");
+  Serial.print(dp, 3);
+  Serial.print(" V, expected ");
+  Serial.print(DLINE_0V6_MIN_V, 2);
+  Serial.print("..");
+  Serial.print(DLINE_0V6_MAX_V, 2);
+  Serial.print(" V -> ");
+  Serial.println(dp_ok ? "OK" : "FAIL");
+
+  Serial.print("D- response check: ");
+  Serial.print(dm, 3);
+  Serial.print(" V, expected ");
+  Serial.print(BC12_DM_RESPONSE_MIN_V, 2);
+  Serial.print("..");
+  Serial.print(BC12_DM_RESPONSE_MAX_V, 2);
+  Serial.print(" V -> ");
+  Serial.println(dm_response ? "RESPONSE" : "NO RESPONSE");
+
+  Serial.println();
+
+  if (!dp_ok) {
+    Serial.println("Test 3 result: ERROR");
+    Serial.println("D+ was not driven to the expected 0.6V range.");
+    Serial.println("This suggests a probe wiring or firmware issue.");
+    blink_red(10);
+    return false;
+  }
+
+  if (dm_response) {
+    Serial.println("Test 3 result: PASS-like");
+    Serial.println("D- responded around 0.6V.");
+    Serial.println("This is charging-port-like behavior, but this test alone does not distinguish CDP from DCP.");
+    usbc_probe_led_rgb(false, true, false); // green
+    return true;
+  }
+
+  Serial.println("Test 3 result: DONE, no D- response");
+  Serial.println("VBUS was present and D+ was driven, but D- did not respond around 0.6V.");
+  Serial.println("This may be SDP-like/no-BC1.2 response, or the charger/cable may not expose that behavior.");
+
+  // Blue means completed, but no BC1.2-like response.
+  usbc_probe_led_rgb(false, false, true);
+  return false;
+}
+
+// -----------------------------------------------------------------------------
 // Menu
 // -----------------------------------------------------------------------------
 
@@ -712,6 +923,7 @@ static void print_menu(void) {
   Serial.println("========================================");
   Serial.println("1: Unconnected self-check");
   Serial.println("2: Sink attach / VBUS wait");
+  Serial.println("3: BC1.2 D+ 0.6V / D- response check");
   Serial.println("o: Open all probe lines");
   Serial.println("v: Print voltages once");
   Serial.println("q: Turn LEDs off");
@@ -764,6 +976,11 @@ void loop() {
     case '2':
       drain_serial_input();
       test_sink_attach_wait();
+      break;
+
+    case '3':
+      drain_serial_input();
+      test_bc12_dp_0v6_dm_response();
       break;
 
     case 'o':
